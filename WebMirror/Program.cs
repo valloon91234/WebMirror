@@ -4,12 +4,8 @@ using EmbedIO;
 using EmbedIO.WebApi;
 using Swan.Logging;
 using System.Diagnostics;
-using System.Net.Http;
-using System.Reflection.PortableExecutable;
 using System.Text;
-using System;
 using EmbedIO.Files;
-using Swan;
 using System.Net.Http.Headers;
 
 //Console.BufferHeight = Int16.MaxValue - 1;
@@ -32,9 +28,8 @@ const string targetHost = "ak47bet.com";
 using var server = CreateWebServer("http://*:80/");
 server.OnAny(async (ctx) =>
 {
-    // Forward the request to the real web server and get the response
     var rawUrl = ctx.Request.RawUrl.ToString();
-    Logger.WriteLine($"{ctx.Request.RemoteEndPoint.Address} \t\t {ctx.Request.HttpMethod} \t\t {rawUrl}");
+    Logger.WriteLine($"[{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}] \t {ctx.Request.RemoteEndPoint.Address.ToString().Split(":").Last()} \t {ctx.Request.HttpMethod} \t {rawUrl}");
 
     if (rawUrl == "/asset/Banner/banner_jk.jpg")
     {
@@ -79,26 +74,35 @@ server.OnAny(async (ctx) =>
 
     var url = $"{ctx.Request.Url.Scheme}://{targetHost}" + rawUrl;
     Logger.WriteLine($"{url}", ConsoleColor.Green);
-    var response = await ForwardRequestAsync(url, ctx);
+    var forwardedResponse = await ForwardRequestAsync(url, ctx);
 
     // Copy the response headers and content to the client's response
-    ctx.Response.StatusCode = (int)response.StatusCode;
-    Logger.WriteLine($"response.StatusCode = {response.StatusCode}");
-    foreach (var header in response.Headers)
+    ctx.Response.StatusCode = (int)forwardedResponse.StatusCode;
+    //Logger.WriteLine($"response.StatusCode = {forwardedResponse.StatusCode}");
+    foreach (var header in forwardedResponse.Headers)
     {
         if (header.Key.StartsWith("Accept-")) continue;
-        Logger.WriteLine($"response.Headers    *****    {header.Key}    {string.Join(", ", header.Value)}");
+        //Logger.WriteLine($"response.Headers    *****    {header.Key}    {string.Join(", ", header.Value)}");
         ctx.Response.Headers.Add(header.Key, string.Join(", ", header.Value));
     }
 
     string? contentType = null;
-    foreach (var header in response.Content.Headers)
+    long? contentLength = null;
+    foreach (var header in forwardedResponse.Content.Headers)
     {
-        Logger.WriteLine($"response.Content.Headers    ----    {header.Key}    {string.Join(", ", header.Value)}");
+        //Logger.WriteLine($"response.Content.Headers    ----    {header.Key}    {string.Join(", ", header.Value)}");
         if (header.Key == "Content-Type")
         {
             contentType = string.Join(", ", string.Join(", ", header.Value));
             ctx.Response.ContentType = contentType;
+        }
+        else if (header.Key == "Content-Length")
+        {
+            try
+            {
+                contentLength = long.Parse(string.Join(", ", string.Join(", ", header.Value)));
+            }
+            catch { }
         }
         else
             ctx.Response.Headers.Add(header.Key, string.Join(", ", header.Value));
@@ -111,10 +115,32 @@ server.OnAny(async (ctx) =>
     //    await ctx.Response.OutputStream.WriteAsync(Encoding.UTF8.GetBytes(content));
     //}
     //else
+    //{
+    //    var content = await forwardedResponse.Content.ReadAsByteArrayAsync();
+    //    await ctx.Response.OutputStream.WriteAsync(content);
+    //}
+
+    if (contentType == "text/html")
     {
-        var content = await response.Content.ReadAsByteArrayAsync();
+        var contentText = @"<iframe src=""/q/support.html"" title=""Contact Support"" width=""100%"" height=""240px""
+style=""background: #fff;position: fixed;z-index: 999999;top: 0;""></iframe>
+<style>body{margin-top: 240px !important;}</style>";
+        if (contentLength != null)
+            ctx.Response.ContentLength64 = contentLength.Value + contentText.Length;
+        var content = await forwardedResponse.Content.ReadAsByteArrayAsync();
+        await ctx.Response.OutputStream.WriteAsync(content);
+        await ctx.Response.OutputStream.WriteAsync(Encoding.UTF8.GetBytes(contentText));
+    }
+    else
+    {
+        if (contentLength != null)
+        {
+            ctx.Response.ContentLength64 = contentLength.Value;
+        }
+        var content = await forwardedResponse.Content.ReadAsByteArrayAsync();
         await ctx.Response.OutputStream.WriteAsync(content);
     }
+
 });
 var task = server.RunAsync();
 Console.WriteLine("Running...");
@@ -160,12 +186,12 @@ static async Task<HttpResponseMessage> ForwardRequestAsync(string url, IHttpCont
         var value = context.Request.Headers[key];
         if (/* key == "Host" || key == "Origin" || key == "Referer" || */ key.StartsWith("Accept-"))
         {
-            Logger.WriteLine($"Request.Headers (dismissed)    ----    {key}    {value}", ConsoleColor.DarkYellow);
+            //Logger.WriteLine($"Request.Headers (dismissed)    ----    {key}    {value}", ConsoleColor.DarkYellow);
             continue;
         }
         if (value != null && userHostName != null)
             value = value.Replace(userHostName, targetHost);
-        Logger.WriteLine($"Request.Headers    ----    {key}    {value}", ConsoleColor.Green);
+        //Logger.WriteLine($"Request.Headers    ----    {key}    {value}", ConsoleColor.Green);
 
         if (key == "Content-Type" && value != null && requestMessage.Content != null)
             requestMessage.Content!.Headers.ContentType = new MediaTypeHeaderValue(value);
